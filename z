@@ -1,0 +1,146 @@
+# used dataset from https://www.kaggle.com/uciml/adult-census-income/data
+# predict probability that someone makes > $50K
+
+# imports
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split as split
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+import tensorflow as tf
+
+# File path info
+file_path = '/Users/kakkineni/bin/'
+input_file = 'incomeover50.csv'
+output_file = 'incomeover50_probs.csv'
+input_file_path = file_path + input_file
+output_file_path = file_path + output_file
+
+# declare encoders
+onehot = OneHotEncoder()
+label = LabelEncoder()
+
+# convert file to dataframe
+def file_to_df(file_path, input_file):
+    input_file_path = file_path + input_file
+    return pd.read_csv(input_file_path)
+
+# pop outcome variable into a separate dataframe from explanatory variables dataframe
+def df_to_splitxy(base_data, outcome_variable):
+    outcome_variable = pd.DataFrame(base_data.pop(outcome_variable))
+    explanatory_variables = base_data
+    return outcome_variable, explanatory_variables
+
+# dataframe display options
+def print_full(x):
+    pd.set_option('display.max_rows', len(x))
+    print(x)
+    pd.reset_option('display.max_rows')
+
+# label encode y datasets, then onehot encode
+def label_to_onehot(dataset, variable, onehotname, labelname):
+    encoded_variable = labelname.fit_transform(dataset[variable])
+    encoded_variable_df = pd.DataFrame(encoded_variable)
+    onehotname.fit(encoded_variable_df)
+    encoded_variable_df_onehot = pd.DataFrame(onehot.transform(encoded_variable_df).toarray(), columns = dataset[variable].unique())
+    return encoded_variable_df_onehot
+
+# create x and y datasets
+base_data = file_to_df(file_path, input_file)
+y, x = df_to_splitxy(base_data, 'income_over50')
+
+# LabelEncode --> OneHotEncode species in y
+y = label_to_onehot(y, 'income_over50', onehot, label)
+#y
+
+#label encode all non-numeric data in explanatory dataset
+for xi in x:
+    if x[xi].dtypes == 'object':
+        encodedx = pd.DataFrame(label.fit_transform(x[xi])).rename(index=str, columns={0: xi})
+        x[xi] = encodedx[xi].values
+        
+# fit and transform x to onehot encoder 
+onehot.fit(x)
+x1 = onehot.transform(x).toarray()
+#x1
+
+# Train & Test ratios
+train_ratio = 0.9
+test_ratio = 1 - train_ratio
+
+# Split Data to train and test
+x_train, x_test, y_train, y_test = split(x1, y, test_size = test_ratio, random_state=1)
+x_train_base, x_test_base, y_train_base, y_test_base = split(x, y, test_size = test_ratio, random_state=1)
+
+# shape of each train and test dataset
+print("Shape of X_train: ", x_train.shape)
+print("Shape of y_train: ", y_train.shape)
+print("Shape of X_test: ", x_test.shape)
+print("Shape of y_test", y_test.shape)
+print("Shape of X_train_base: ", x_train_base.shape)
+print("Shape of X_test_base: ", x_test_base.shape)
+
+# hyperparameters
+learning_rate = 0.0001
+num_epochs = 100
+display_step = 1
+
+# for visualize purpose in tensorboard we use tf.name_scope
+with tf.name_scope("Declaring_placeholder"):
+    # x is placeholder for iris features. We will feed data later on
+    x = tf.placeholder(tf.float32, [None, 22144])
+    # y is placeholder for iris labels. We will feed data later on
+    y = tf.placeholder(tf.float32, [None, 2])
+    
+with tf.name_scope("Declaring_variables"):
+    # W is our weights. This will update during training time
+    W = tf.Variable(tf.zeros([22144, 2]))
+    # b is our bias. This will also update during training time
+    b = tf.Variable(tf.zeros([2]))
+
+with tf.name_scope("Declaring_functions"):
+    # our prediction function
+    y_ = tf.nn.softmax(tf.add(tf.matmul(x, W), b))
+
+with tf.name_scope("calculating_cost"):
+    # calculating cost
+    cost = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=y_)
+    
+with tf.name_scope("declaring_gradient_descent"):
+    # optimizer
+    # we use gradient descent for our optimizer 
+    optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate).minimize(cost)
+    
+with tf.name_scope("starting_tensorflow_session"):
+    with tf.Session() as sess:
+        # initialize all variables
+        sess.run(tf.global_variables_initializer())
+        for epoch in range(num_epochs):
+            cost_in_each_epoch = 0
+            # let's start training
+            _, c = sess.run([optimizer, cost], feed_dict={x: x_train, y: y_train})
+            cost_in_each_epoch += c
+            # you can uncomment next two lines of code for printing cost when training
+            #if (epoch+1) % display_step == 0:
+                #print("Epoch: {}".format(epoch + 1), "cost={}".format(cost_in_each_epoch))
+        
+        print("Optimization Finished!")
+
+        # Test model
+        correct_prediction = tf.equal(tf.argmax(y_, 1), tf.argmax(y, 1))
+        # Calculate accuracy for 3000 examples
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        print("Accuracy:", accuracy.eval({x: x_test, y: y_test}))
+        probabilities=y_
+        print("probabilities", probabilities.eval(feed_dict={x: x_test, y: y_test}, session=sess))
+        prob_df = pd.DataFrame(probabilities.eval({x: x_test, y: y_test}), columns=['0','1'])
+        correct_prediction = tf.equal(tf.argmax(y,1), tf.argmax(y_,1))
+        
+prob_df.to_csv(output_file_path)
+print(sum(prob_df['0']))
+print(len(prob_df['0']))
+
+prob_df['id'] = x_test_base.index
+x_test_base['id'] = x_test_base.index
+
+zz = pd.merge(x_test_base, prob_df, on='id')
+zz.to_csv(output_file_path)
